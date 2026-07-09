@@ -1,5 +1,7 @@
 import type { ClauseSegment } from './clauseSplitter'
 import type { ParseResult } from './parser'
+import type { Dialect } from '@/types'
+import { isAggregateName, funcNameOf } from './functions'
 
 export type RowDirection = 'resolve' | 'narrows' | 'group' | 'filter-groups' | 'project' | 'distinct' | 'reorders' | 'limits'
 
@@ -51,18 +53,22 @@ function colName(node: any): string {
   return ''
 }
 
-function collectAggregates(node: any, acc: string[] = []): string[] {
+function collectAggregates(node: any, acc: string[] = [], dialect: Dialect = 'postgresql'): string[] {
   if (!node || typeof node !== 'object') return acc
   if (Array.isArray(node)) {
-    node.forEach((n) => collectAggregates(n, acc))
+    node.forEach((n) => collectAggregates(n, acc, dialect))
     return acc
   }
   if (node.type === 'aggr_func') {
     acc.push(`${node.name}(${colName(node.args?.expr)})`)
+  } else if (node.type === 'function' && isAggregateName(funcNameOf(node), dialect)) {
+    const name = funcNameOf(node)
+    const argNode = Array.isArray(node.args?.value) ? node.args.value[0] : node.args?.expr
+    acc.push(`${name.toUpperCase()}(${colName(argNode)})`)
   }
   for (const k of Object.keys(node)) {
     if (k === 'type') continue
-    collectAggregates(node[k], acc)
+    collectAggregates(node[k], acc, dialect)
   }
   return acc
 }
@@ -84,6 +90,7 @@ export function buildExecutionFlow(
 
   const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
   if (!ast) return []
+  const dialect: Dialect = parse.dialect ?? 'postgresql'
   const steps: FlowStep[] = []
 
   const byKeyword = new Map<string, ClauseSegment>()
@@ -112,7 +119,7 @@ export function buildExecutionFlow(
       else {
         const name = c.as ? `${colName(c.expr)} AS ${c.as}` : colName(c.expr)
         selectColumns.push(name)
-        collectAggregates(c.expr, selectAggregates)
+        collectAggregates(c.expr, selectAggregates, dialect)
       }
     })
   }

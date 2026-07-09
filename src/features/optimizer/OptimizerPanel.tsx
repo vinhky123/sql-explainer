@@ -76,7 +76,7 @@ export function OptimizerPanel() {
   const clearHighlight = useEditorStore((s) => s.clearHighlight)
 
   const parse = useMemo(() => parseSql(sql, dialect), [sql, dialect])
-  const findings = useMemo(() => runHeuristics(sql, parse.ast), [sql, parse.ast])
+  const findings = useMemo(() => runHeuristics(sql, parse.ast, dialect), [sql, parse.ast, dialect])
   const sorted = useMemo(() => [...findings].sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity)), [findings])
 
   const counts = useMemo(() => ({

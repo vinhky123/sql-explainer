@@ -9,6 +9,7 @@ export type Dialect =
   | 'redshift'
   | 'db2'
   | 'flinksql'
+  | 'duckdb'
 
 export interface DialectOption {
   value: Dialect
@@ -26,6 +27,7 @@ export const DIALECTS: DialectOption[] = [
   { value: 'bigquery', label: 'BigQuery', group: 'Analytics' },
   { value: 'snowflake', label: 'Snowflake', group: 'Analytics' },
   { value: 'redshift', label: 'Redshift', group: 'Analytics' },
+  { value: 'duckdb', label: 'DuckDB', group: 'Analytics' },
   { value: 'flinksql', label: 'Flink SQL', group: 'Streaming' },
 ]
 

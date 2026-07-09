@@ -9,12 +9,13 @@ const dialectMap: Record<Dialect, string> = {
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   sqlite: 'SQLite',
-  tsql: 'TSQL',
+  tsql: 'TransactSQL',
   bigquery: 'BigQuery',
   snowflake: 'Snowflake',
-  redshift: 'RedshiftSQL',
+  redshift: 'Redshift',
   db2: 'DB2',
   flinksql: 'FlinkSQL',
+  duckdb: 'PostgreSQL',
 }
 
 export interface JinjaMeta {
@@ -29,12 +30,14 @@ export interface ParseResult {
   ast: any | null
   error: ParseError | null
   jinja: JinjaMeta
+  dialect: Dialect
+  parserDialect: string
 }
 
 const NO_JINJA: JinjaMeta = { detected: false, refs: [], vars: [], warnings: [] }
 
 export function parseSql(sql: string, dialect: Dialect): ParseResult {
-  if (!sql.trim()) return { ok: true, ast: [], error: null, jinja: NO_JINJA }
+  if (!sql.trim()) return { ok: true, ast: [], error: null, jinja: NO_JINJA, dialect, parserDialect: dialectMap[dialect] }
 
   let toParse = sql
   let jinja: JinjaMeta = NO_JINJA
@@ -44,16 +47,25 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
     jinja = { detected: true, refs: r.refs, vars: r.vars, warnings: r.warnings }
   }
 
+  const parserDialect = dialectMap[dialect]
   try {
-    const ast = parser.astify(toParse, { database: dialectMap[dialect] })
-    return { ok: true, ast: Array.isArray(ast) ? ast : [ast], error: null, jinja }
+    const ast = parser.astify(toParse, { database: parserDialect })
+    return { ok: true, ast: Array.isArray(ast) ? ast : [ast], error: null, jinja, dialect, parserDialect }
   } catch (e: any) {
+    if (dialect === 'duckdb') {
+      try {
+        const ast = parser.astify(toParse, { database: 'MySQL' })
+        return { ok: true, ast: Array.isArray(ast) ? ast : [ast], error: null, jinja, dialect, parserDialect: 'MySQL' }
+      } catch {
+        // fall through to original error
+      }
+    }
     const err: ParseError = {
       message: e?.message ?? String(e),
       line: jinja.detected ? undefined : e?.location?.start?.line,
       column: jinja.detected ? undefined : e?.location?.start?.column,
     }
-    return { ok: false, ast: null, error: err, jinja }
+    return { ok: false, ast: null, error: err, jinja, dialect, parserDialect }
   }
 }
 

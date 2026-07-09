@@ -8,6 +8,11 @@ function flow(sql: string) {
   return buildExecutionFlow(splitClauses(sql), parse)
 }
 
+function flowDialect(sql: string, dialect: Parameters<typeof parseSql>[1]) {
+  const parse = parseSql(sql, dialect)
+  return buildExecutionFlow(splitClauses(sql), parse)
+}
+
 function descriptions(sql: string): string[] {
   return flow(sql).map((s) => s.description)
 }
@@ -55,5 +60,28 @@ describe('buildExecutionFlow (smoke)', () => {
 
   it('returns empty for unparseable input', () => {
     expect(descriptions('SELECT FROM')).toEqual([])
+  })
+})
+
+describe('buildExecutionFlow (dialect-aware aggregate detection)', () => {
+  it('collects standard aggregates regardless of dialect', () => {
+    const selectStep = flowDialect('SELECT id, COUNT(*) FROM t GROUP BY id', 'mysql').find(
+      (s) => s.clause === 'SELECT',
+    )!
+    expect(selectStep.aggregates).toContain('COUNT(*)')
+  })
+
+  it('collects STRING_AGG on PostgreSQL even when parsed as a plain function', () => {
+    const selectStep = flowDialect("SELECT id, STRING_AGG(name, ',') FROM t GROUP BY id", 'postgresql').find(
+      (s) => s.clause === 'SELECT',
+    )!
+    const aggs = selectStep.aggregates ?? []
+    expect(aggs.some((a) => a.toUpperCase().startsWith('STRING_AGG'))).toBe(true)
+  })
+
+  it('collects DuckDB LIST/PRODUCT aggregates via the DuckDB dialect', () => {
+    const selectStep = flowDialect('SELECT LIST(val) FROM t', 'duckdb').find((s) => s.clause === 'SELECT')!
+    const aggs = selectStep.aggregates ?? []
+    expect(aggs.some((a) => a.toUpperCase().startsWith('LIST'))).toBe(true)
   })
 })

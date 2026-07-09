@@ -60,3 +60,37 @@ select * from s where total > {{ var('min_total', 100) }}`
     expect(r.jinja.detected).toBe(true)
   })
 })
+
+describe('parseSql (dialect names + DuckDB)', () => {
+  it('parses T-SQL via the corrected TransactSQL name (regression)', () => {
+    const r = parseSql('SELECT id FROM users WHERE id = 5', 'tsql')
+    expect(r.ok).toBe(true)
+    expect(r.parserDialect).toBe('TransactSQL')
+    expect(r.dialect).toBe('tsql')
+    expect(r.ast[0].type).toBe('select')
+  })
+
+  it('parses Redshift via the corrected Redshift name (regression)', () => {
+    const r = parseSql('SELECT id FROM users WHERE id = 5', 'redshift')
+    expect(r.ok).toBe(true)
+    expect(r.parserDialect).toBe('Redshift')
+    expect(r.ast[0].type).toBe('select')
+  })
+
+  it('parses DuckDB by falling back to PostgreSQL mode', () => {
+    const r = parseSql('SELECT id, LISTAGG(name) FROM t GROUP BY id', 'duckdb')
+    expect(r.ok).toBe(true)
+    expect(r.dialect).toBe('duckdb')
+    expect(r.parserDialect).toBe('PostgreSQL')
+    expect(r.ast[0].type).toBe('select')
+  })
+
+  it('exposes dialect + parserDialect on the result for every engine', () => {
+    for (const d of ['mysql', 'mariadb', 'sqlite', 'bigquery', 'snowflake', 'db2', 'flinksql'] as const) {
+      const r = parseSql('SELECT 1 AS x', d)
+      expect(r.ok).toBe(true)
+      expect(r.dialect).toBe(d)
+      expect(r.parserDialect).toBeTruthy()
+    }
+  })
+})

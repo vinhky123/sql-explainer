@@ -13,6 +13,7 @@ const dialectMap: Record<Dialect, string> = {
   redshift: 'redshift',
   db2: 'db2',
   flinksql: 'sql',
+  duckdb: 'duckdb',
 }
 
 export type IndentStyle = 'standard' | 'tabularLeft' | 'tabularRight'

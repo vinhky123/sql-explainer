@@ -41,7 +41,7 @@ export function AiPanel() {
     if (!hasKey) { setSettingsOpen(true); return }
 
     setError(null)
-    const findings = runHeuristics(sql, parseSql(sql, dialect).ast)
+    const findings = runHeuristics(sql, parseSql(sql, dialect).ast, dialect)
     const history: ChatMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...messages.map((m) => ({ role: m.role, content: m.content } as ChatMessage)),

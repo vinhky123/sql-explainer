@@ -1,5 +1,7 @@
 import type { FlowStep } from './executionOrder'
 import type { ParseResult } from './parser'
+import type { Dialect } from '@/types'
+import { isAggregateName, funcNameOf } from './functions'
 import {
   buildSourceTable, columnRefInfo,
   type SourceTable, type InferredTable, type ColumnKind,
@@ -71,14 +73,15 @@ function resolveKey(node: any, tables: InferredTable[]): string | null {
   return tables[0] ? `${tables[0].name}.${info.name}` : info.name
 }
 
-function hasAggr(node: any): boolean {
+function hasAggr(node: any, dialect: Dialect = 'postgresql'): boolean {
   if (!node || typeof node !== 'object') return false
-  if (Array.isArray(node)) return node.some(hasAggr)
+  if (Array.isArray(node)) return node.some((n) => hasAggr(n, dialect))
   if (node.type === 'aggr_func') return true
+  if (node.type === 'function' && isAggregateName(funcNameOf(node), dialect)) return true
   if (node.type === 'select' || node.ast) return false
   for (const k of Object.keys(node)) {
     if (k === 'type') continue
-    if (hasAggr(node[k])) return true
+    if (hasAggr(node[k], dialect)) return true
   }
   return false
 }
@@ -193,6 +196,7 @@ function computeSelectValues(
   members: WorkRow[],
   groupValues: Record<string, any>,
   tables: InferredTable[],
+  dialect: Dialect,
 ): Record<string, any> {
   const out: Record<string, any> = {}
   cols.forEach((c: any, i: number) => {
@@ -203,7 +207,7 @@ function computeSelectValues(
       out[key] = groupValues[key] ?? members[0]?.values[key]
       return
     }
-    if (expr?.type === 'aggr_func') {
+    if (expr?.type === 'aggr_func' || (expr?.type === 'function' && isAggregateName(funcNameOf(expr), dialect))) {
       out[`__agg_${i}`] = evalExpr(expr, { get: makeRowGet(groupValues, tables), rows: members, tables })
       return
     }
@@ -212,14 +216,14 @@ function computeSelectValues(
   return out
 }
 
-function applySelect(prev: WorkState, ast: any, tables: InferredTable[]): WorkState {
+function applySelect(prev: WorkState, ast: any, tables: InferredTable[], dialect: Dialect): WorkState {
   const cols = ast.columns
   if (!Array.isArray(cols) || cols.length === 0) return prev
 
   const isStar = cols.some(
     (c: any) => c.type === 'star' || (c.expr?.type === 'column_ref' && columnRefInfo(c.expr)?.name === '*'),
   )
-  const hasAggregates = prev.grouped || cols.some((c: any) => hasAggr(c.expr))
+  const hasAggregates = prev.grouped || cols.some((c: any) => hasAggr(c.expr, dialect))
 
   let outCols: WorkCol[]
   if (isStar) {
@@ -242,7 +246,7 @@ function applySelect(prev: WorkState, ast: any, tables: InferredTable[]): WorkSt
           isAgg: false,
         }
       }
-      if (expr?.type === 'aggr_func') {
+      if (expr?.type === 'aggr_func' || (expr?.type === 'function' && isAggregateName(funcNameOf(expr), dialect))) {
         const label = alias ?? formatAggrLabel(expr)
         return { key: `__agg_${i}`, label, name: label, table: '', kind: aggrKind(expr, prev.columns), alive: true, isAgg: true }
       }
@@ -259,14 +263,14 @@ function applySelect(prev: WorkState, ast: any, tables: InferredTable[]): WorkSt
   if (hasAggregates && !isStar) {
     if (prev.grouped) {
       rows = prev.rows.map((r) => {
-        const newValues = computeSelectValues(cols, r.members ?? [r], r.values, tables)
+        const newValues = computeSelectValues(cols, r.members ?? [r], r.values, tables, dialect)
         return { ...r, values: { ...r.values, ...newValues } }
       })
     } else {
       const aliveRows = prev.rows.filter((r) => r.alive)
       const members = aliveRows.length > 0 ? aliveRows : prev.rows
       const groupValues = members[0]?.values ?? {}
-      const newValues = computeSelectValues(cols, members, groupValues, tables)
+      const newValues = computeSelectValues(cols, members, groupValues, tables, dialect)
       rows = [{ id: 5000, values: { ...groupValues, ...newValues }, alive: true, groupSize: members.length }]
     }
   } else if (isStar) {
@@ -274,7 +278,7 @@ function applySelect(prev: WorkState, ast: any, tables: InferredTable[]): WorkSt
   } else {
     rows = prev.rows.map((r) => {
       if (!r.alive) return r
-      const newValues = computeSelectValues(cols, [r], r.values, tables)
+      const newValues = computeSelectValues(cols, [r], r.values, tables, dialect)
       return { ...r, values: { ...r.values, ...newValues } }
     })
   }
@@ -337,12 +341,12 @@ function applyOffset(prev: WorkState, ast: any): WorkState {
   return { ...prev, rows }
 }
 
-function applyStep(prev: WorkState, step: FlowStep, ast: any, tables: InferredTable[]): WorkState {
+function applyStep(prev: WorkState, step: FlowStep, ast: any, tables: InferredTable[], dialect: Dialect): WorkState {
   switch (step.id) {
     case 'WHERE': return applyWhere(prev, ast, tables)
     case 'GROUP BY': return applyGroupBy(prev, ast, tables)
     case 'HAVING': return applyHaving(prev, ast, tables)
-    case 'SELECT': return applySelect(prev, ast, tables)
+    case 'SELECT': return applySelect(prev, ast, tables, dialect)
     case 'DISTINCT': return applyDistinct(prev)
     case 'ORDER BY': return applyOrderBy(prev, ast, tables)
     case 'LIMIT': return applyLimit(prev, ast)
@@ -419,6 +423,7 @@ export function buildSnapshots(steps: FlowStep[], parse: ParseResult): SnapshotR
   if (!source || source.columns.length === 0 || source.rows.length === 0) return null
 
   const tables = source.tables
+  const dialect: Dialect = parse.dialect ?? 'postgresql'
   let cur: WorkState = {
     columns: source.columns.map((c) => ({ ...c, alive: true, isAgg: false })),
     rows: source.rows.map((r) => ({ id: r.id, values: { ...r.values }, alive: true })),
@@ -427,7 +432,7 @@ export function buildSnapshots(steps: FlowStep[], parse: ParseResult): SnapshotR
   const states: WorkState[] = [cur]
 
   for (let i = 1; i < steps.length; i++) {
-    cur = applyStep(cur, steps[i], ast, tables)
+    cur = applyStep(cur, steps[i], ast, tables, dialect)
     states.push(cur)
   }
 

@@ -1,5 +1,6 @@
-import type { Finding } from '@/types'
+import type { Finding, Dialect } from '@/types'
 import { hasJinja, stripJinja, remapToOriginal, type StripJinjaResult } from '@/lib/sql/jinja'
+import { isAggregateName } from '@/lib/sql/functions'
 
 interface Locate {
   snippet: string
@@ -76,12 +77,22 @@ function funcName(node: any): string {
 function isCountStar(node: any): boolean {
   if (!node) return false
   const target = node.type === 'expr' ? node.expr : node
-  return (
-    target?.type === 'aggr_func' &&
-    String(target.name).toUpperCase() === 'COUNT' &&
-    (target.args?.expr?.type === 'star' || target.args?.expr?.column === '*')
-  )
+  const name = aggregateNameOf(target, CURRENT_DIALECT)
+  if (name !== 'COUNT') return false
+  return target.args?.expr?.type === 'star' || target.args?.expr?.column === '*'
 }
+
+function aggregateNameOf(node: any, dialect: Dialect): string | null {
+  if (!node) return null
+  if (node.type === 'aggr_func') return String(node.name).toUpperCase()
+  if (node.type === 'function') {
+    const n = funcName(node).toUpperCase()
+    return isAggregateName(n, dialect) ? n : null
+  }
+  return null
+}
+
+let CURRENT_DIALECT: Dialect = 'postgresql'
 
 function hasCountStarCompareZero(node: any): boolean {
   let found = false
@@ -413,8 +424,9 @@ function firstColumn(node: any): string {
   return found
 }
 
-export function runHeuristics(sql: string, astArray: any): Finding[] {
+export function runHeuristics(sql: string, astArray: any, dialect: Dialect = 'postgresql'): Finding[] {
   if (!astArray) return []
+  CURRENT_DIALECT = dialect
   const stmts = Array.isArray(astArray) ? astArray : [astArray]
   const stripped: StripJinjaResult | null = hasJinja(sql) ? stripJinja(sql) : null
   const scanSql = stripped ? stripped.stripped : sql

@@ -52,11 +52,15 @@ select * from s where total > {{ var('min_total', 100) }}`
     expect(r.jinja.warnings.length).toBeGreaterThan(0)
   })
 
-  it('still reports syntax errors in the compiled SQL (without misleading line:col)', () => {
-    const r = parseSql('select from {{ ref("t") }}', 'postgresql')
+  it('remaps the syntax-error location back to original-space line:col under Jinja', () => {
+    const sql = `{{ config(materialized='table') }}
+select id from {{ ref('users') }}
+where =`
+    const r = parseSql(sql, 'postgresql')
     expect(r.ok).toBe(false)
-    expect(r.error?.message).toBeTruthy()
-    expect(r.error?.line).toBeUndefined()
+    expect(r.error?.message).toContain('Line ')
+    expect(r.error?.line).toBe(3)
+    expect(typeof r.error?.column).toBe('number')
     expect(r.jinja.detected).toBe(true)
   })
 })

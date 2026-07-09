@@ -1,8 +1,23 @@
 import { Parser } from 'node-sql-parser'
 import type { Dialect, ParseError } from '@/types'
-import { hasJinja, stripJinja } from './jinja'
+import { hasJinja, stripJinja, remapToOriginal, type StripJinjaResult } from './jinja'
 
 const parser = new Parser()
+
+function offsetToLineCol(sql: string, offset: number): { line: number; column: number } {
+  let line = 1
+  let column = 1
+  const end = Math.min(offset, sql.length)
+  for (let i = 0; i < end; i++) {
+    if (sql[i] === '\n') {
+      line++
+      column = 1
+    } else {
+      column++
+    }
+  }
+  return { line, column }
+}
 
 const dialectMap: Record<Dialect, string> = {
   postgresql: 'PostgreSQL',
@@ -41,10 +56,11 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
 
   let toParse = sql
   let jinja: JinjaMeta = NO_JINJA
+  let stripped: StripJinjaResult | null = null
   if (hasJinja(sql)) {
-    const r = stripJinja(sql)
-    toParse = r.stripped
-    jinja = { detected: true, refs: r.refs, vars: r.vars, warnings: r.warnings }
+    stripped = stripJinja(sql)
+    toParse = stripped.stripped
+    jinja = { detected: true, refs: stripped.refs, vars: stripped.vars, warnings: stripped.warnings }
   }
 
   const parserDialect = dialectMap[dialect]
@@ -60,8 +76,19 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
         // fall through to original error
       }
     }
-    const line = jinja.detected ? undefined : e?.location?.start?.line
-    const column = jinja.detected ? undefined : e?.location?.start?.column
+    let line = e?.location?.start?.line as number | undefined
+    let column = e?.location?.start?.column as number | undefined
+    if (stripped) {
+      const strippedOffset = e?.location?.start?.offset as number | undefined
+      if (typeof strippedOffset === 'number') {
+        const lc = offsetToLineCol(sql, remapToOriginal(stripped, strippedOffset))
+        line = lc.line
+        column = lc.column
+      } else {
+        line = undefined
+        column = undefined
+      }
+    }
     const rawMsg = e?.message ?? String(e)
     const message = line ? `Line ${line}, col ${column ?? '?'}: ${rawMsg}` : rawMsg
     const err: ParseError = { message, line, column }

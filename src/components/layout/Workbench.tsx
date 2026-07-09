@@ -88,9 +88,6 @@ export function Workbench({ rightPanel, toolbar }: WorkbenchProps) {
       </div>
       {parse.error && parse.error.message && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
-          {parse.error.line && (
-            <span className="font-mono mr-2">L{parse.error.line}:{parse.error.column ?? '?'}</span>
-          )}
           {parse.error.message}
         </div>
       )}

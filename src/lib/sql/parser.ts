@@ -60,11 +60,11 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
         // fall through to original error
       }
     }
-    const err: ParseError = {
-      message: e?.message ?? String(e),
-      line: jinja.detected ? undefined : e?.location?.start?.line,
-      column: jinja.detected ? undefined : e?.location?.start?.column,
-    }
+    const line = jinja.detected ? undefined : e?.location?.start?.line
+    const column = jinja.detected ? undefined : e?.location?.start?.column
+    const rawMsg = e?.message ?? String(e)
+    const message = line ? `Line ${line}, col ${column ?? '?'}: ${rawMsg}` : rawMsg
+    const err: ParseError = { message, line, column }
     return { ok: false, ast: null, error: err, jinja, dialect, parserDialect }
   }
 }

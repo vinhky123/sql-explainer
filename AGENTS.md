@@ -56,6 +56,7 @@ Unit tests run on **Vitest** (`vitest.config.ts`, jsdom env, specs colocated as 
 - **sql-formatter v15**: there is **no** `commaPosition` or `newlineBeforeOpenParen` option (older docs lie). Real options are in `lib/sql/formatter.ts`.
 - **React Flow v12** (`@xyflow/react`): `NodeProps` data is untyped by default; code casts `data as SomeInterface`. ERD edges use per-column handles — `sourceHandle`/`targetHandle` on edges must match `Handle id={col.name}` in `TableNode`; change both together.
 - **Plan heat** (`lib/queryPlan/parsePlan.ts`) uses **exclusive/self time** (inclusive − children), not inclusive — otherwise the root is always ~100%. Guard `timeShare` on `actualTotalTime != null` so non-ANALYZE plans render neutral.
+- **Jinja placeholder invariant** (`lib/sql/jinja.ts`): unresolved `{{ }}` expressions MUST become a **parseable** placeholder — a parenthesized synthetic identifier `(jinja_expr_N)` — never `NULL`. `x IN NULL` is invalid SQL; `x IN (jinja_expr_N)` is valid, as are `ORDER BY (jinja_expr_N)` and `coalesce(a, (jinja_expr_N), (jinja_expr_N))`. `ref()`/`source()` resolve to bare identifiers, `var()`-without-default and `{{ none }}`/`{{ null }}` to `NULL`. dbt macros (`in_list`, `lag_ignore_nulls`, `{% set %}` vars) can't be compiled client-side, so they surface as `(jinja_expr_N)` placeholders + warnings. The regression guard is `src/lib/sql/jinja.dbtRegression.test.ts` (strips **and** parses a macro-heavy model); do not regress it to `NULL`.
 
 ## Conventions
 

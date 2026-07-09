@@ -57,10 +57,15 @@ describe('stripJinja — expression resolution', () => {
     expect(r.stripped).toBe("'2024-01-01'")
   })
 
-  it('falls back to NULL for unknown expressions and warns', () => {
+  it('falls back to a parenthesized placeholder for unknown expressions and warns', () => {
     const r = stripJinja('{{ safe_divide("revenue", "sessions") }}')
-    expect(r.stripped).toBe('NULL')
-    expect(r.warnings.length).toBeGreaterThan(0)
+    expect(r.stripped).toBe('(jinja_expr_1)')
+    expect(r.warnings.some((w) => w.includes('jinja_expr_1'))).toBe(true)
+  })
+
+  it('assigns distinct ids to multiple unresolved expressions', () => {
+    const r = stripJinja('{{ a() }} AND {{ b() }}')
+    expect(r.stripped).toBe('(jinja_expr_1) AND (jinja_expr_2)')
   })
 
   it('resolves bare literals (number / true / null)', () => {

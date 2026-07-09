@@ -156,7 +156,7 @@ interface ExprResolution {
   note?: string
 }
 
-function resolveExpr(inner: string): ExprResolution {
+function resolveExpr(inner: string, jinjaExprId: number): ExprResolution {
   const s = inner.trim()
 
   let m = s.match(/^ref\s*\(([\s\S]*)\)\s*$/i)
@@ -196,8 +196,8 @@ function resolveExpr(inner: string): ExprResolution {
   if (/^(null|none)$/i.test(s)) return { placeholder: 'NULL' }
 
   return {
-    placeholder: 'NULL',
-    note: `Unresolved Jinja expression "{{ ${s} }}" replaced with NULL`,
+    placeholder: `(jinja_expr_${jinjaExprId})`,
+    note: `Unresolved Jinja expression "{{ ${s} }}" replaced with placeholder (jinja_expr_${jinjaExprId})`,
   }
 }
 
@@ -212,6 +212,7 @@ export function stripJinja(sql: string): StripJinjaResult {
   const originalToStripped: number[] = new Array(n + 1)
 
   let i = 0
+  let jinjaExprCounter = 0
   let inSingle = false
   let inDouble = false
   let inLine = false
@@ -276,7 +277,7 @@ export function stripJinja(sql: string): StripJinjaResult {
       let placeholder = ''
       let controlBlock = false
       if (kind === 'expr') {
-        const r = resolveExpr(inner)
+        const r = resolveExpr(inner, ++jinjaExprCounter)
         placeholder = r.placeholder
         if (r.ref) refs.push(r.ref)
         if (r.varName) vars.push(r.varName)

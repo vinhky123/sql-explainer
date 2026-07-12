@@ -1,4 +1,4 @@
-import type { ClauseSegment } from './clauseSplitter'
+import { splitClauses, type ClauseSegment } from './clauseSplitter'
 import type { ParseResult } from './parser'
 import type { Dialect } from '@/types'
 import { isAggregateName, funcNameOf } from './functions'
@@ -185,13 +185,129 @@ export function buildSelectFlow(
   return steps
 }
 
+export interface CteBody {
+  name: string
+  bodyStart: number
+  bodyEnd: number
+  ast: any
+}
+
+function skipWhitespaceAndCommas(text: string, i: number): number {
+  while (i < text.length && /[\s,]/.test(text[i])) i++
+  return i
+}
+
+function readIdentifier(text: string, i: number): { name: string; next: number } | null {
+  if (text[i] === '"') {
+    const end = text.indexOf('"', i + 1)
+    if (end < 0) return null
+    return { name: text.slice(i + 1, end), next: end + 1 }
+  }
+  const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i))
+  if (!m) return null
+  return { name: m[0], next: i + m[0].length }
+}
+
+function findMatchingParen(text: string, open: number): number {
+  let depth = 0
+  let inSingle = false
+  let inDouble = false
+  let inLine = false
+  let inBlock = false
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]
+    const nx = text[i + 1] ?? ''
+    if (inLine) { if (ch === '\n') inLine = false; continue }
+    if (inBlock) { if (ch === '*' && nx === '/') { inBlock = false; i++ } continue }
+    if (inSingle) { if (ch === "'") inSingle = false; continue }
+    if (inDouble) { if (ch === '"') inDouble = false; continue }
+    if (ch === '-' && nx === '-') { inLine = true; i++; continue }
+    if (ch === '/' && nx === '*') { inBlock = true; i++; continue }
+    if (ch === "'") { inSingle = true; continue }
+    if (ch === '"') { inDouble = true; continue }
+    if (ch === '(') { depth++; continue }
+    if (ch === ')') { depth--; if (depth === 0) return i; continue }
+  }
+  return -1
+}
+
+export function extractCteBodies(
+  withSegment: ClauseSegment | undefined,
+  ast: any,
+): CteBody[] {
+  if (!withSegment || !Array.isArray(ast?.with)) return []
+  const origin = withSegment.startOffset
+  const text = withSegment.text
+  const out: CteBody[] = []
+  let i = 0
+  const withMatch = /^WITH\s+/i.exec(text)
+  if (!withMatch) return []
+  i = withMatch[0].length
+  const rec = /^RECURSIVE\s+/i.exec(text.slice(i))
+  if (rec) i += rec[0].length
+
+  for (let c = 0; c < ast.with.length; c++) {
+    const cte = ast.with[c]
+    i = skipWhitespaceAndCommas(text, i)
+    const id = readIdentifier(text, i)
+    if (!id) break
+    i = id.next
+    i = skipWhitespaceAndCommas(text, i)
+    if (text[i] === '(') {
+      const close = findMatchingParen(text, i)
+      if (close < 0) break
+      i = close + 1
+      i = skipWhitespaceAndCommas(text, i)
+    }
+    const asMatch = /^AS\b/i.exec(text.slice(i))
+    if (!asMatch) break
+    i += asMatch[0].length
+    i = skipWhitespaceAndCommas(text, i)
+    if (text[i] !== '(') break
+    const open = i
+    const close = findMatchingParen(text, open)
+    if (close < 0) break
+    const innerAst = cte.stmt?.ast ?? cte.stmt
+    out.push({
+      name: id.name,
+      bodyStart: origin + open + 1,
+      bodyEnd: origin + close,
+      ast: innerAst,
+    })
+    i = close + 1
+  }
+  return out
+}
+
 export function buildExecutionFlow(
   segments: ClauseSegment[],
   parse: ParseResult,
+  sql: string,
 ): FlowStep[] {
   if (!parse.ok || !parse.ast) return []
   const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
   if (!ast) return []
   const dialect: Dialect = parse.dialect ?? 'postgresql'
-  return buildSelectFlow(segments, ast, dialect, undefined)
+
+  const withSeg = segments.find((s) => s.keyword === 'WITH')
+  const cteBodies = extractCteBodies(withSeg, ast)
+
+  const steps: FlowStep[] = []
+
+  for (const body of cteBodies) {
+    const inner = body.ast
+    if (!inner || inner.type !== 'select' || inner._next || !inner.from?.[0]?.table) continue
+    const bodyText = sql.slice(body.bodyStart, body.bodyEnd)
+    const bodySegs = splitClauses(bodyText).map((s) => ({
+      ...s,
+      startOffset: s.startOffset + body.bodyStart,
+      endOffset: s.endOffset + body.bodyStart,
+    }))
+    steps.push(...buildSelectFlow(bodySegs, inner, dialect, body.name))
+  }
+
+  const mainSegs = segments.filter((s) => s.keyword !== 'WITH')
+  steps.push(...buildSelectFlow(mainSegs, ast, dialect, undefined))
+
+  return steps
 }

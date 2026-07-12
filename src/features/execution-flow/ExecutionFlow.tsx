@@ -156,7 +156,7 @@ export function ExecutionFlow() {
   const { sql, dialect } = useSqlStore()
   const parse = useMemo(() => parseSql(sql, dialect), [sql, dialect])
   const segments = useMemo(() => splitClauses(sql), [sql])
-  const steps = useMemo(() => buildExecutionFlow(segments, parse), [segments, parse])
+  const steps = useMemo(() => buildExecutionFlow(segments, parse, sql), [segments, parse, sql])
   const snapshotResult = useMemo(() => buildSnapshots(steps, parse), [steps, parse])
 
   const [view, setView] = useState<View>(snapshotResult ? 'data' : 'pipeline')

@@ -22,6 +22,7 @@ export interface FlowStep {
 }
 
 const ORDER: Record<string, number> = {
+  WITH: 0,
   FROM: 1,
   WHERE: 2,
   'GROUP BY': 3,
@@ -98,6 +99,14 @@ export function buildExecutionFlow(
     if (!byKeyword.has(s.keyword)) byKeyword.set(s.keyword, s)
   }
 
+  const cteNames: string[] = []
+  if (Array.isArray(ast.with)) {
+    ast.with.forEach((cte: any) => {
+      const name = cte.name?.value ?? cte.name ?? '?'
+      cteNames.push(name)
+    })
+  }
+
   const tables: string[] = []
   const joinTypes: string[] = []
   if (Array.isArray(ast.from)) {
@@ -152,6 +161,10 @@ export function buildExecutionFlow(
       rowDirection,
       ...extra,
     })
+  }
+
+  if (cteNames.length > 0) {
+    addStep('WITH', 'WITH', `Define ${cteNames.length} CTE${cteNames.length > 1 ? 's' : ''}: ${cteNames.join(', ')}`, 'resolve', { tables: cteNames })
   }
 
   if (byKeyword.has('FROM')) {

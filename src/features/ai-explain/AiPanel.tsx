@@ -41,7 +41,8 @@ export function AiPanel() {
     if (!hasKey) { setSettingsOpen(true); return }
 
     setError(null)
-    const findings = runHeuristics(sql, parseSql(sql, dialect).ast, dialect)
+    const parseResult = parseSql(sql, dialect)
+    const findings = runHeuristics(sql, parseResult.ast, dialect)
     const history: ChatMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...messages.map((m) => ({ role: m.role, content: m.content } as ChatMessage)),
@@ -49,7 +50,7 @@ export function AiPanel() {
     const isFirst = messages.length === 0
     history.push({
       role: 'user',
-      content: isFirst ? buildExplainUserMessage(sql, dialect, findings) : userText.trim(),
+      content: isFirst ? buildExplainUserMessage(sql, dialect, findings, parseResult.ast, parseResult.parserDialect) : userText.trim(),
     })
 
     setMessages((m) => [...m, { role: 'user', content: isFirst ? 'Explain this query' : userText.trim() }, { role: 'assistant', content: '' }])

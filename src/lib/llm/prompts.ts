@@ -1,12 +1,14 @@
 import type { Finding } from '@/types'
 import type { Dialect } from '@/types'
 import { hasJinja, stripJinja } from '@/lib/sql/jinja'
+import { getParser } from '@/lib/sql/parser'
 
 export const SYSTEM_PROMPT = `You are SQL Explainer's AI assistant — an expert SQL engineer helping a developer understand and improve a query.
 
 Rules:
 - Be concise and concrete. Use short paragraphs and bullet points.
 - Walk through what the query does step by step: tables, joins, filters, grouping, ordering.
+- When the query has CTEs (WITH clauses), explain each CTE individually first, then walk through the final query.
 - When suggesting optimizations, explain *why* and give a concrete rewrite when possible.
 - Do not invent schema or columns that aren't in the query.
 - Use markdown sparingly: **bold** for key terms, \`code\` for identifiers, and fenced blocks for SQL.
@@ -15,7 +17,16 @@ Rules:
 
 const MAX_SQL_CHARS = 8000
 
-export function buildExplainUserMessage(sql: string, dialect: Dialect, findings: Finding[] = []): string {
+export function extractCteInfo(ast: any, parserDialect?: string): { name: string; sql: string }[] {
+  if (!ast || !Array.isArray(ast) || !ast[0] || !Array.isArray(ast[0].with)) return []
+  const parser = getParser()
+  return ast[0].with.map((cte: any) => ({
+    name: cte.name?.value ?? cte.name ?? '?',
+    sql: parser.sqlify(cte.stmt, parserDialect ? { database: parserDialect } : undefined),
+  }))
+}
+
+export function buildExplainUserMessage(sql: string, dialect: Dialect, findings: Finding[] = [], ast?: any, parserDialect?: string): string {
   const parts: string[] = []
   parts.push(`Explain this ${dialect} SQL query. Walk through what it does, then note any performance concerns or improvements.`)
 
@@ -38,8 +49,16 @@ export function buildExplainUserMessage(sql: string, dialect: Dialect, findings:
     parts.push('\nThe heuristic optimizer found no issues — focus on explaining what the query does.')
   }
 
+  const ctes = ast ? extractCteInfo(ast, parserDialect) : []
+  if (ctes.length > 0) {
+    parts.push(`\nThis query has ${ctes.length} CTE(s). Explain each one individually first, then walk through the final query:`)
+    for (const cte of ctes) {
+      parts.push(`\n### CTE \`${cte.name}\`:\n\`\`\`sql\n${cte.sql}\n\`\`\``)
+    }
+  }
+
   const truncated = body.length > MAX_SQL_CHARS ? body.slice(0, MAX_SQL_CHARS) + '\n-- …(truncated)' : body
-  parts.push('\nSQL:')
+  parts.push('\n### Final query:')
   parts.push('```sql')
   parts.push(truncated)
   parts.push('```')

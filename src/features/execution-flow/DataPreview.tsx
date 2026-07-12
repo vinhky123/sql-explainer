@@ -23,34 +23,47 @@ const numericKinds = new Set(['id', 'ref', 'count', 'age'])
 
 interface Props {
   steps: FlowStep[]
-  snapshots: TableSnapshot[]
+  snapshots: (TableSnapshot | null)[]
   activeIdx: number
   onStepClick: (i: number) => void
 }
 
-export function DataPreview({ steps, snapshots, activeIdx, onStepClick }: Props) {
-  const idx = Math.max(0, Math.min(activeIdx, snapshots.length - 1))
-  const snap = snapshots[idx]
-  const step = steps[idx]
-  const colCount = snap.columns.length
-  const gridCols = `2rem repeat(${colCount}, minmax(5.5rem, 1fr))`
-  const Icon = clauseIcon[step.clause] ?? Sigma
-
+function ScopePills({
+  steps,
+  snapshots,
+  idx,
+  onStepClick,
+}: {
+  steps: FlowStep[]
+  snapshots: (TableSnapshot | null)[]
+  idx: number
+  onStepClick: (i: number) => void
+}) {
+  let lastCte: string | undefined | null = null
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex gap-1 overflow-x-auto border-b border-border/60 px-2 py-1.5">
-        {steps.map((s, i) => {
-          const SIcon = clauseIcon[s.clause] ?? Sigma
-          const active = i === idx
-          return (
+    <div className="flex gap-1 overflow-x-auto border-b border-border/60 px-2 py-1.5">
+      {steps.map((s, i) => {
+        const SIcon = clauseIcon[s.clause] ?? Sigma
+        const active = i === idx
+        const showScope = s.cte !== lastCte
+        lastCte = s.cte
+        const disabled = snapshots[i] === null
+        return (
+          <div key={s.id} className="flex shrink-0 flex-col gap-0.5">
+            {showScope && (
+              <span className="px-1 text-[9px] font-medium uppercase tracking-wide text-indigo-400">
+                {s.cte ?? 'main'}
+              </span>
+            )}
             <button
-              key={s.id}
               onClick={() => onStepClick(i)}
               className={cn(
                 'flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors',
                 active
                   ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                  : disabled
+                    ? 'border-border/40 text-muted-foreground/40'
+                    : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground',
               )}
             >
               <span
@@ -64,14 +77,57 @@ export function DataPreview({ steps, snapshots, activeIdx, onStepClick }: Props)
               <SIcon className="h-3 w-3" />
               {s.clause}
             </button>
-          )
-        })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function DataPreview({ steps, snapshots, activeIdx, onStepClick }: Props) {
+  const idx = Math.max(0, Math.min(activeIdx, snapshots.length - 1))
+  const snap = snapshots[idx]
+  const step = steps[idx]
+  const Icon = clauseIcon[step.clause] ?? Sigma
+
+  if (!snap) {
+    return (
+      <div className="flex h-full flex-col">
+        <ScopePills steps={steps} snapshots={snapshots} idx={idx} onStepClick={onStepClick} />
+        <div className="border-b border-border/60 bg-primary/5 px-3 py-1.5 text-xs">
+          <Icon className="mr-1 inline h-3 w-3 text-primary" />
+          <span className="font-mono text-primary">Step {idx + 1}/{steps.length}:</span>{' '}
+          <span className="font-medium text-foreground">{step.clause}</span>
+          {step.cte && (
+            <span className="ml-2 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
+              {step.cte}
+            </span>
+          )}
+          <span className="text-muted-foreground"> — no preview available for this scope</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
+          This CTE references something the mock-data engine can&apos;t model (e.g. a recursive or set-op CTE).
+        </div>
       </div>
+    )
+  }
+
+  const colCount = snap.columns.length
+  const gridCols = `2rem repeat(${colCount}, minmax(5.5rem, 1fr))`
+
+  return (
+    <div className="flex h-full flex-col">
+      <ScopePills steps={steps} snapshots={snapshots} idx={idx} onStepClick={onStepClick} />
 
       <div className="border-b border-border/60 bg-primary/5 px-3 py-1.5 text-xs">
         <Icon className="mr-1 inline h-3 w-3 text-primary" />
         <span className="font-mono text-primary">Step {idx + 1}/{steps.length}:</span>{' '}
         <span className="font-medium text-foreground">{step.clause}</span>
+        {step.cte && (
+          <span className="ml-2 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
+            {step.cte}
+          </span>
+        )}
         <span className="text-muted-foreground"> — {step.description}</span>
         <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-foreground">{snap.badge}</span>
       </div>

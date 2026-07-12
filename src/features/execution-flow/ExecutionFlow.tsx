@@ -6,7 +6,7 @@ import { useEditorStore } from '@/store/editorStore'
 import { parseSql } from '@/lib/sql/parser'
 import { splitClauses } from '@/lib/sql/clauseSplitter'
 import { buildExecutionFlow, type FlowStep } from '@/lib/sql/executionOrder'
-import { buildSnapshots, type TableSnapshot } from '@/lib/sql/dataTransform'
+import { buildSnapshots } from '@/lib/sql/dataTransform'
 import { FlowNode, type FlowNodeData } from './FlowNode'
 import { DataPreview } from './DataPreview'
 import { Play, Pause, SkipBack, SkipForward, Workflow, AlertCircle, Table2, GitBranch } from 'lucide-react'
@@ -237,7 +237,7 @@ export function ExecutionFlow() {
         ) : (
           <DataPreview
             steps={steps}
-            snapshots={snapshotResult!.snapshots as TableSnapshot[]}
+            snapshots={snapshotResult!.snapshots}
             activeIdx={activeIdx}
             onStepClick={(i) => { setActiveIdx(() => i); setPlaying(() => false) }}
           />

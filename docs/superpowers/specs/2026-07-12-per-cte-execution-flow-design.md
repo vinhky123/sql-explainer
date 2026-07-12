@@ -133,7 +133,7 @@ Mechanics:
    - Skip optional column list `( col1, col2 )` (paren-balanced).
    - Expect `AS`.
    - Expect `(`; from there, track paren depth (+ string/comment state, reusing the same lexical awareness as `clauseSplitter`) to find the matching `)`. That range is `(bodyStart, bodyEnd)` in withSegment-text space; add `originOffset` to get original-space offsets.
-4. Pair each `(bodyStart, bodyEnd)` with its AST from `ast.with[i].stmt.ast`. If `stmt.ast` is missing (recursive/UNION CTE), **skip** the body — mark the CTE as "unvisualizable" so the caller can fall back. (See Limitations.)
+4. Pair each `(bodyStart, bodyEnd)` with its inner AST. **AST access path (verified):** `node-sql-parser` stores the CTE body differently depending on shape — for a single-statement CTE, `cte.stmt` **is** the SELECT AST directly (no `.ast` wrapper); for some wrapped/complex bodies it's `{ ast: <select> }`. Normalize with `const innerAst = cte.stmt?.ast ?? cte.stmt`. If `innerAst?.type !== 'select'`, **skip** the body — mark the CTE as "unvisualizable" so the caller can fall back. (See Limitations.)
 
 **New: CTE body clause splitting.** For each extracted CTE body:
 
@@ -306,7 +306,7 @@ Then manual: `npm run dev` → load a multi-CTE query → `/execution-flow` → 
 
 ## Limitations (documented, with graceful fallback)
 
-1. **Recursive / UNION CTEs** (`WITH RECURSIVE`, or a CTE body containing `UNION`): `node-sql-parser` does not expose `cte.stmt.ast` for these (verified — `stmt.ast` is `undefined`). Such CTEs are **skipped** in both Pipeline and Data views — they don't get per-clause steps, and don't crash. Future work could parse `cte.stmt` directly if needed.
+1. **Recursive / UNION CTEs** (`WITH RECURSIVE`, or a CTE body containing `UNION`/`UNION ALL`): the normalized inner AST (`cte.stmt?.ast ?? cte.stmt`) has `type === 'select'` but `from[0].table` is undefined and `inner._next` is set (the set-op branch). `buildSourceTable` can't seed these (no resolvable table). Such CTEs are **skipped** in both Pipeline and Data views — they don't get per-clause steps, and don't crash. Detection: `innerAst.type !== 'select' || innerAst._next || !innerAst.from?.[0]?.table` → skip.
 2. **CTEs referencing real tables the mock-data layer can't model** (`buildSourceTable` returns null): that CTE's scope emits `null` Data snapshots; Pipeline steps still render.
 3. **Column-list CTEs** (`cte (a, b) AS (SELECT …)`): the optional column list is parsed-and-skipped during body extraction; it does not rename the snapshot columns. Minor cosmetic gap.
 4. **Subqueries / derived tables** (non-CTE): still not expanded into sub-flows. Same gap as before; out of scope.

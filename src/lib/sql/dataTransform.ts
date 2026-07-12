@@ -341,8 +341,14 @@ function applyOffset(prev: WorkState, ast: any): WorkState {
   return { ...prev, rows }
 }
 
+function clauseKeyword(step: FlowStep): string {
+  const id = step.id
+  const idx = id.indexOf('::')
+  return idx >= 0 ? id.slice(idx + 2) : id
+}
+
 function applyStep(prev: WorkState, step: FlowStep, ast: any, tables: InferredTable[], dialect: Dialect): WorkState {
-  switch (step.id) {
+  switch (clauseKeyword(step)) {
     case 'WHERE': return applyWhere(prev, ast, tables)
     case 'GROUP BY': return applyGroupBy(prev, ast, tables)
     case 'HAVING': return applyHaving(prev, ast, tables)
@@ -375,7 +381,7 @@ function getReferencedKeys(step: FlowStep, ast: any, tables: InferredTable[]): S
       if (k) keys.add(k)
     }
   }
-  switch (step.id) {
+  switch (clauseKeyword(step)) {
     case 'WHERE': add(ast.where); break
     case 'GROUP BY': (ast.groupby?.columns ?? []).forEach(add); break
     case 'HAVING': add(ast.having); break
@@ -417,10 +423,8 @@ function toSnapshot(st: WorkState, step: FlowStep, ast: any, tables: InferredTab
 
 function seedScopeState(
   scopeAst: any,
-  dialect: Dialect,
   cteResults: Map<string, WorkState>,
 ): { state: WorkState; tables: InferredTable[] } | null {
-  void dialect
   const from0 = scopeAst.from?.[0]
   if (!from0 || !from0.table) return null
   const cteSeed = cteResults.get(String(from0.table))
@@ -456,8 +460,8 @@ function snapshotScope(
   scopeAst: any,
   dialect: Dialect,
   cteResults: Map<string, WorkState>,
-): { snaps: TableSnapshot[]; final: WorkState; seedTables: InferredTable[] } | null {
-  const seeded = seedScopeState(scopeAst, dialect, cteResults)
+): { snaps: TableSnapshot[]; final: WorkState } | null {
+  const seeded = seedScopeState(scopeAst, cteResults)
   if (!seeded) return null
   const { state: seed, tables } = seeded
   const states: WorkState[] = [seed]
@@ -466,7 +470,7 @@ function snapshotScope(
     cur = applyStep(cur, scopeSteps[i], scopeAst, tables, dialect)
     states.push(cur)
   }
-  return { snaps: states.map((st, i) => toSnapshot(st, scopeSteps[i], scopeAst, tables)), final: cur, seedTables: tables }
+  return { snaps: states.map((st, i) => toSnapshot(st, scopeSteps[i], scopeAst, tables)), final: cur }
 }
 
 export function buildSnapshots(
@@ -501,7 +505,6 @@ export function buildSnapshots(
 
   const cteResults = new Map<string, WorkState>()
   const snapshots: (TableSnapshot | null)[] = []
-  let mainSource: SourceTable | null = null
 
   for (const scope of scopes) {
     const scopeAst = scope.cte == null ? mainAst : cteAst.get(scope.cte)
@@ -516,24 +519,9 @@ export function buildSnapshots(
     }
     snapshots.push(...result.snaps)
     if (scope.cte) cteResults.set(scope.cte, result.final)
-    if (scope.cte == null && mainSource === null) {
-      const src = buildSourceTable(mainAst)
-      if (src) {
-        mainSource = src
-      } else {
-        mainSource = {
-          columns: result.final.columns
-            .filter((c) => c.alive)
-            .map((c) => ({ key: c.key, label: c.label, name: c.name, table: c.table, kind: c.kind })),
-          rows: result.final.rows
-            .filter((r) => r.alive)
-            .map((r) => ({ id: r.id, values: { ...r.values } })),
-          tables: result.seedTables,
-        }
-      }
-    }
   }
 
-  if (mainSource === null) return null
+  const mainSource = buildSourceTable(mainAst)
+  if (!mainSource) return null
   return { snapshots, source: mainSource }
 }

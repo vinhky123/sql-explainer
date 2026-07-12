@@ -6,7 +6,7 @@ import { useEditorStore } from '@/store/editorStore'
 import { parseSql } from '@/lib/sql/parser'
 import { splitClauses } from '@/lib/sql/clauseSplitter'
 import { buildExecutionFlow, type FlowStep } from '@/lib/sql/executionOrder'
-import { buildSnapshots } from '@/lib/sql/dataTransform'
+import { buildSnapshots, type TableSnapshot } from '@/lib/sql/dataTransform'
 import { FlowNode, type FlowNodeData } from './FlowNode'
 import { DataPreview } from './DataPreview'
 import { Play, Pause, SkipBack, SkipForward, Workflow, AlertCircle, Table2, GitBranch } from 'lucide-react'
@@ -157,7 +157,7 @@ export function ExecutionFlow() {
   const parse = useMemo(() => parseSql(sql, dialect), [sql, dialect])
   const segments = useMemo(() => splitClauses(sql), [sql])
   const steps = useMemo(() => buildExecutionFlow(segments, parse, sql), [segments, parse, sql])
-  const snapshotResult = useMemo(() => buildSnapshots(steps, parse), [steps, parse])
+  const snapshotResult = useMemo(() => buildSnapshots(steps, parse, sql), [steps, parse, sql])
 
   const [view, setView] = useState<View>(snapshotResult ? 'data' : 'pipeline')
   const [activeIdx, setActiveIdx] = useState(-1)
@@ -237,7 +237,7 @@ export function ExecutionFlow() {
         ) : (
           <DataPreview
             steps={steps}
-            snapshots={snapshotResult!.snapshots}
+            snapshots={snapshotResult!.snapshots as TableSnapshot[]}
             activeIdx={activeIdx}
             onStepClick={(i) => { setActiveIdx(() => i); setPlaying(() => false) }}
           />

@@ -31,7 +31,7 @@ export interface TableSnapshot {
 }
 
 export interface SnapshotResult {
-  snapshots: TableSnapshot[]
+  snapshots: (TableSnapshot | null)[]
   source: SourceTable
 }
 
@@ -415,27 +415,125 @@ function toSnapshot(st: WorkState, step: FlowStep, ast: any, tables: InferredTab
   return { columns, rows, grouped: st.grouped, badge }
 }
 
-export function buildSnapshots(steps: FlowStep[], parse: ParseResult): SnapshotResult | null {
-  if (!parse.ok || !parse.ast) return null
-  const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
-  if (!ast || ast.type !== 'select') return null
-  const source = buildSourceTable(ast)
+function seedScopeState(
+  scopeAst: any,
+  dialect: Dialect,
+  cteResults: Map<string, WorkState>,
+): { state: WorkState; tables: InferredTable[] } | null {
+  void dialect
+  const from0 = scopeAst.from?.[0]
+  if (!from0 || !from0.table) return null
+  const cteSeed = cteResults.get(String(from0.table))
+  if (cteSeed) {
+    const columns: WorkCol[] = cteSeed.columns
+      .filter((c) => c.alive)
+      .map((c) => ({ ...c, alive: true, isAgg: false }))
+    const rows: WorkRow[] = cteSeed.rows
+      .filter((r) => r.alive)
+      .map((r, i) => ({ id: i, values: { ...r.values }, alive: true }))
+    const tables: InferredTable[] = [{
+      realName: String(from0.table),
+      name: from0.as ?? String(from0.table),
+      alias: from0.as,
+      columns: columns.map((c) => ({ name: c.name, kind: c.kind, table: c.name })),
+    }]
+    if (columns.length === 0 || rows.length === 0) return null
+    return { state: { columns, rows, grouped: false }, tables }
+  }
+  const source = buildSourceTable(scopeAst)
   if (!source || source.columns.length === 0 || source.rows.length === 0) return null
-
   const tables = source.tables
-  const dialect: Dialect = parse.dialect ?? 'postgresql'
-  let cur: WorkState = {
+  const state: WorkState = {
     columns: source.columns.map((c) => ({ ...c, alive: true, isAgg: false })),
     rows: source.rows.map((r) => ({ id: r.id, values: { ...r.values }, alive: true })),
     grouped: false,
   }
-  const states: WorkState[] = [cur]
+  return { state, tables }
+}
 
-  for (let i = 1; i < steps.length; i++) {
-    cur = applyStep(cur, steps[i], ast, tables, dialect)
+function snapshotScope(
+  scopeSteps: FlowStep[],
+  scopeAst: any,
+  dialect: Dialect,
+  cteResults: Map<string, WorkState>,
+): { snaps: TableSnapshot[]; final: WorkState; seedTables: InferredTable[] } | null {
+  const seeded = seedScopeState(scopeAst, dialect, cteResults)
+  if (!seeded) return null
+  const { state: seed, tables } = seeded
+  const states: WorkState[] = [seed]
+  let cur = seed
+  for (let i = 1; i < scopeSteps.length; i++) {
+    cur = applyStep(cur, scopeSteps[i], scopeAst, tables, dialect)
     states.push(cur)
   }
+  return { snaps: states.map((st, i) => toSnapshot(st, scopeSteps[i], scopeAst, tables)), final: cur, seedTables: tables }
+}
 
-  const snapshots = states.map((st, i) => toSnapshot(st, steps[i], ast, tables))
-  return { snapshots, source }
+export function buildSnapshots(
+  steps: FlowStep[],
+  parse: ParseResult,
+  sql: string,
+): SnapshotResult | null {
+  if (!sql.trim()) return null
+  if (!parse.ok || !parse.ast) return null
+  const mainAst = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
+  if (!mainAst || mainAst.type !== 'select') return null
+  const dialect: Dialect = parse.dialect ?? 'postgresql'
+
+  const cteAst = new Map<string, any>()
+  if (Array.isArray(mainAst.with)) {
+    for (const cte of mainAst.with) {
+      const name = cte.name?.value ?? cte.name
+      const inner = cte.stmt?.ast ?? cte.stmt
+      if (name && inner?.type === 'select' && !inner._next && inner.from?.[0]?.table) {
+        cteAst.set(String(name), inner)
+      }
+    }
+  }
+
+  interface Scope { cte: string | undefined; steps: FlowStep[] }
+  const scopes: Scope[] = []
+  for (const step of steps) {
+    const last = scopes[scopes.length - 1]
+    if (last && last.cte === step.cte) last.steps.push(step)
+    else scopes.push({ cte: step.cte, steps: [step] })
+  }
+
+  const cteResults = new Map<string, WorkState>()
+  const snapshots: (TableSnapshot | null)[] = []
+  let mainSource: SourceTable | null = null
+
+  for (const scope of scopes) {
+    const scopeAst = scope.cte == null ? mainAst : cteAst.get(scope.cte)
+    if (!scopeAst) {
+      snapshots.push(...scope.steps.map(() => null))
+      continue
+    }
+    const result = snapshotScope(scope.steps, scopeAst, dialect, cteResults)
+    if (result === null) {
+      snapshots.push(...scope.steps.map(() => null))
+      continue
+    }
+    snapshots.push(...result.snaps)
+    if (scope.cte) cteResults.set(scope.cte, result.final)
+    if (scope.cte == null && mainSource === null) {
+      const src = buildSourceTable(mainAst)
+      if (src) {
+        mainSource = src
+      } else {
+        mainSource = {
+          columns: result.final.columns
+            .filter((c) => c.alive)
+            .map((c) => ({ key: c.key, label: c.label, name: c.name, table: c.table, kind: c.kind })),
+          rows: result.final.rows
+            .filter((r) => r.alive)
+            .map((r) => ({ id: r.id, values: { ...r.values } })),
+          tables: result.seedTables,
+        }
+      }
+    }
+  }
+
+  if (mainSource === null) return null
+  return { snapshots, source: mainSource }
 }

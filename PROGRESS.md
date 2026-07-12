@@ -557,3 +557,24 @@ Modified:
 ```
 
 **To verify:** `npm run typecheck`, `npm run test:run` (89/89), `npm run build`. Then `npm run dev` → Home → "dbt model (Jinja)" sample → note the "dbt" badge → Execution flow renders → Optimize → click a finding → highlight lands on the right line in the **raw templated** text → Format reinserts the `{{ }}` tags.
+
+---
+
+## Per-CTE Execution Flow ✅
+
+**Status:** Complete. Typecheck clean, build passes, lint 0 errors, **139 tests across 13 files** all pass.
+
+**What was built:**
+- `FlowStep` gained an optional `cte?: string` field tagging each step's scope (which CTE it belongs to, or undefined for the main query).
+- `buildExecutionFlow` (in `lib/sql/executionOrder.ts`) was refactored: the per-SELECT step-building logic was extracted into a reusable `buildSelectFlow(segments, ast, dialect, cte)` helper. A new `extractCteBodies(withSegment, ast)` does a paren-balanced, string/comment-aware scan of the `WITH` region to find each CTE body's offsets in the original SQL, then `buildExecutionFlow` builds a per-CTE flow (via `buildSelectFlow`) for each CTE before the main query. Step offsets are remapped to original-SQL space so editor highlighting lands correctly. Recursive/set-op CTEs (`WITH RECURSIVE`, CTE bodies with UNION) are skipped gracefully — they produce no steps and don't crash.
+- `buildSnapshots` (in `lib/sql/dataTransform.ts`) was extended to walk the flat step list grouped by `cte` scope. Each scope is seeded from real tables (`buildSourceTable`) OR, when the CTE's FROM references an earlier CTE, from that earlier CTE's final WorkState — so a CTE-of-CTE chain carries data forward visually. Unvisualizable scopes emit `null` snapshots. The `SnapshotResult.snapshots` type widened to `(TableSnapshot | null)[]`. When the main query's FROM is a CTE (the common case), `mainSource` is synthesized from the main scope's seeded state.
+- `FlowNode.tsx` shows an indigo scope chip (Braces icon) on each step card when `step.cte` is set, so the pipeline reads clearly as cte_a → cte_b → main.
+- `DataPreview.tsx` groups its step pills by scope (shows a `cte name` / `main` label when scope changes), disables pills whose snapshot is null, and renders a friendly "no preview available for this scope" state instead of crashing for unvisualizable scopes.
+- New test file `src/lib/sql/dataTransform.test.ts` (4 tests); `executionOrder.test.ts` gained per-CTE tests (offset remapping, id uniqueness, recursive-CTE skip).
+
+**Verified:** `npm run typecheck` (clean), `npm run test:run` (139/139), `npm run lint` (0 errors, 3 pre-existing react-refresh warnings), `npm run build` (passes). Manual browser smoke is the user's to run (`npm run dev` → `/execution-flow` → load a multi-CTE query → Play walks cte-by-cte; hover a CTE step highlights the right lines in the editor; Data tab shows rows flowing through CTEs).
+
+**Notes:**
+- Limitation: recursive/UNION CTEs and CTEs whose bodies can't be modeled by the mock-data engine are skipped gracefully (no per-clause steps, `null` snapshots). Subqueries/derived tables are still not expanded into sub-flows (same gap as before, out of scope).
+- The `node-sql-parser` CTE AST access path: single-statement CTEs store the SELECT AST directly on `cte.stmt` (no `.ast` wrapper); normalize via `cte.stmt?.ast ?? cte.stmt`.
+- Design doc: `docs/superpowers/specs/2026-07-12-per-cte-execution-flow-design.md`. Implementation plan: `docs/superpowers/plans/2026-07-12-per-cte-execution-flow.md`.

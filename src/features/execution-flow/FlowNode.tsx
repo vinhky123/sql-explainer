@@ -3,7 +3,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { cn } from '@/lib/utils'
 import {
   Database, Filter, Group, Sigma, ArrowDownWideNarrow,
-  Rows3, ArrowUpDown, ArrowDownToLine, Columns3,
+  Rows3, ArrowUpDown, ArrowDownToLine, Columns3, Braces,
 } from 'lucide-react'
 import type { FlowStep, RowDirection } from '@/lib/sql/executionOrder'
 
@@ -60,6 +60,12 @@ function FlowNodeImpl({ data }: NodeProps) {
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary">
           {step.order}
         </span>
+        {step.cte && (
+          <span className="inline-flex items-center gap-1 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+            <Braces className="h-2.5 w-2.5" />
+            {step.cte}
+          </span>
+        )}
         <Icon className="h-3.5 w-3.5 text-primary" />
         <span className="font-mono text-sm font-semibold">{step.clause}</span>
         <span className={cn('ml-auto text-[10px] font-medium', meta.color)}>{meta.label}</span>

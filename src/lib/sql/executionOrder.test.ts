@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { splitClauses } from './clauseSplitter'
-import { buildExecutionFlow } from './executionOrder'
+import { buildExecutionFlow, buildSelectFlow } from './executionOrder'
 import { parseSql } from './parser'
 
 function flow(sql: string) {
@@ -83,5 +83,27 @@ describe('buildExecutionFlow (dialect-aware aggregate detection)', () => {
     const selectStep = flowDialect('SELECT LIST(val) FROM t', 'duckdb').find((s) => s.clause === 'SELECT')!
     const aggs = selectStep.aggregates ?? []
     expect(aggs.some((a) => a.toUpperCase().startsWith('LIST'))).toBe(true)
+  })
+})
+
+describe('buildSelectFlow (extracted helper)', () => {
+  it('produces the same main-query steps as buildExecutionFlow for a no-CTE query', () => {
+    const sql = 'SELECT a FROM t WHERE x=1 GROUP BY a ORDER BY a LIMIT 5'
+    const parse = parseSql(sql, 'postgresql')
+    const segments = splitClauses(sql)
+    const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
+    const helperSteps = buildSelectFlow(segments, ast, 'postgresql', undefined)
+    const flowSteps = buildExecutionFlow(splitClauses(sql), parse)
+    expect(helperSteps.map((s) => s.clause)).toEqual(flowSteps.map((s) => s.clause))
+    expect(helperSteps.every((s) => s.cte === undefined)).toBe(true)
+  })
+
+  it('namespaces step ids by cte when cte is provided', () => {
+    const sql = 'SELECT a FROM t WHERE x=1'
+    const parse = parseSql(sql, 'postgresql')
+    const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
+    const steps = buildSelectFlow(splitClauses(sql), ast, 'postgresql', 'my_cte')
+    expect(steps.every((s) => s.id.startsWith('my_cte::'))).toBe(true)
+    expect(steps.every((s) => s.cte === 'my_cte')).toBe(true)
   })
 })

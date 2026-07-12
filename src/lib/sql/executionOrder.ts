@@ -19,10 +19,10 @@ export interface FlowStep {
   columns?: string[]
   aggregates?: string[]
   setOp?: string
+  cte?: string
 }
 
 const ORDER: Record<string, number> = {
-  WITH: 0,
   FROM: 1,
   WHERE: 2,
   'GROUP BY': 3,
@@ -81,30 +81,17 @@ function fromTableName(t: any): string {
   return `(derived)${alias}`
 }
 
-export function buildExecutionFlow(
+export function buildSelectFlow(
   segments: ClauseSegment[],
-  parse: ParseResult,
+  ast: any,
+  dialect: Dialect,
+  cte: string | undefined,
 ): FlowStep[] {
-  if (!parse.ok || !parse.ast) {
-    return []
-  }
-
-  const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
-  if (!ast) return []
-  const dialect: Dialect = parse.dialect ?? 'postgresql'
   const steps: FlowStep[] = []
 
   const byKeyword = new Map<string, ClauseSegment>()
   for (const s of segments) {
     if (!byKeyword.has(s.keyword)) byKeyword.set(s.keyword, s)
-  }
-
-  const cteNames: string[] = []
-  if (Array.isArray(ast.with)) {
-    ast.with.forEach((cte: any) => {
-      const name = cte.name?.value ?? cte.name ?? '?'
-      cteNames.push(name)
-    })
   }
 
   const tables: string[] = []
@@ -151,7 +138,7 @@ export function buildExecutionFlow(
     const seg = byKeyword.get(keyword)
     if (!seg) return
     steps.push({
-      id: keyword,
+      id: cte ? `${cte}::${keyword}` : keyword,
       order: ORDER[keyword] ?? 99,
       clause,
       snippet: seg.text,
@@ -159,12 +146,9 @@ export function buildExecutionFlow(
       endOffset: seg.endOffset,
       description,
       rowDirection,
+      cte,
       ...extra,
     })
-  }
-
-  if (cteNames.length > 0) {
-    addStep('WITH', 'WITH', `Define ${cteNames.length} CTE${cteNames.length > 1 ? 's' : ''}: ${cteNames.join(', ')}`, 'resolve', { tables: cteNames })
   }
 
   if (byKeyword.has('FROM')) {
@@ -183,7 +167,7 @@ export function buildExecutionFlow(
     addStep('SELECT', hasDistinct ? 'SELECT DISTINCT' : 'SELECT', hasDistinct ? 'Project unique rows (deduplicated)' : 'Project selected columns', 'project', { columns: selectColumns, aggregates: selectAggregates })
   }
   if (hasDistinct && !byKeyword.has('SELECT')) {
-    steps.push({ id: 'DISTINCT', order: 6, clause: 'DISTINCT', snippet: 'DISTINCT', startOffset: 0, endOffset: 0, description: 'Remove duplicate rows', rowDirection: 'distinct' })
+    steps.push({ id: cte ? `${cte}::DISTINCT` : 'DISTINCT', order: 6, clause: 'DISTINCT', snippet: 'DISTINCT', startOffset: 0, endOffset: 0, description: 'Remove duplicate rows', rowDirection: 'distinct', cte })
   }
   if (byKeyword.has('ORDER BY')) {
     addStep('ORDER BY', 'ORDER BY', `Sort by ${orderCols.join(', ') || 'columns'}`, 'reorders', { columns: orderCols })
@@ -199,4 +183,15 @@ export function buildExecutionFlow(
   steps.forEach((s, i) => (s.order = i + 1))
 
   return steps
+}
+
+export function buildExecutionFlow(
+  segments: ClauseSegment[],
+  parse: ParseResult,
+): FlowStep[] {
+  if (!parse.ok || !parse.ast) return []
+  const ast = Array.isArray(parse.ast) ? parse.ast[0] : parse.ast
+  if (!ast) return []
+  const dialect: Dialect = parse.dialect ?? 'postgresql'
+  return buildSelectFlow(segments, ast, dialect, undefined)
 }
